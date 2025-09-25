@@ -83,17 +83,12 @@ df = df.fillna({
 df = df.withColumn("Average_Salary", (col("SALARY_FROM") + col("SALARY_TO")) / 2)
 ```
 
-## Cleaning Education and Employment Type Columns
+## Cleaning Education Columns
 ``` {python}
 # | eval: true
 df = df.withColumn(
     "EDUCATION_LEVELS_NAME",
     regexp_replace(col("EDUCATION_LEVELS_NAME"), r"[\n\r]", "")
-)
-
-
-df["EMPLOYMENT_TYPE_NAME"] = df["EMPLOYMENT_TYPE_NAME"].apply(
-    lambda x: re.sub(r"[^\x00-\x7F]", "", x)
 )
 ```
 
@@ -108,7 +103,8 @@ export_cols = [
   "SALARY",
   "LOT_V6_SPECIALIZED_OCCUPATION_NAME",
   "EMPLOYMENT_TYPE_NAME",
-  "NAICS2_NAME"
+  "NAICS2_NAME",
+  "ONET_NAME"
 ]
 df_selected = df.select(*export_cols)
 pdf = df_selected.toPandas()
@@ -126,33 +122,162 @@ pdf_industry = (
     .toPandas()
 )
 
-median_salaries = pdf.groupby("EMPLOYMENT_TYPE_NAME")["SALARY"].median()
+pdf_industry["EMPLOYMENT_TYPE_NAME"] = pdf_industry["EMPLOYMENT_TYPE_NAME"].apply(
+    lambda x: re.sub(r"[^\x00-\x7F]", "", x)
+)
+
+median_salaries = pdf_industry.groupby("EMPLOYMENT_TYPE_NAME")["SALARY"].median()
 
 sorted_employment_types = median_salaries.sort_values(ascending=False).index
 
-pdf["EMPLOYMENT_TYPE_NAME"] = pd.Categorical(
-    pdf["EMPLOYMENT_TYPE_NAME"],
+pdf_industry["EMPLOYMENT_TYPE_NAME"] = pd.Categorical(
+    pdf_industry["EMPLOYMENT_TYPE_NAME"],
     categories=sorted_employment_types,
     ordered=True
 )
 
 fig = px.box(
-    pdf,
+    pdf_industry,
     x="NAICS2_NAME",
     y="SALARY",
     title="Salary Distribution by Industry",
     color="EMPLOYMENT_TYPE_NAME",
     boxmode="group",
     points="all",
+    labels={"NAICS2_NAME": "Industry", "SALARY": "Salary", "EMPLOYMENT_TYPE_NAME": "Employment Type"},
     height=800
 )
 
-fig.show()
+fig.write_html("figures/Q1.html")
+fig.write_image("figures/Q1.svg")
 ```
 ## Analysis
 The box plot shows that most industries have high variance in their job listings, with outliers making up the majority of industries like Retail Trade, Finance and Insurance, and Construction. However, industries like Public Administration and Educational Services are more naturally distributed, which makes sense given they are often government roles with fixed salaries. This plot shows that full-time salaries tend to be higher by median, but more volatile as well.
 
+![](./figures/Q1.svg)
+
 # Salary Analysis by ONET Occupation Type (Bubble Chart)
 ```{python}
+salary_analysis = spark.sql("""
+  SELECT
+        LOT_V6_OCCUPATION_NAME AS ONET_NAME,
+        PERCENTILE(SALARY, 0.5) AS Median_Salary,
+        COUNT(*) AS Job_Postings
+  FROM job_postings
+  GROUP BY LOT_V6_OCCUPATION_NAME
+  ORDER BY Job_Postings DESC
+  LIMIT 10
+""")
+
+salary_pd = salary_analysis.toPandas()
+
+fig = px.scatter(
+    salary_pd,
+    x="ONET_NAME",
+    y="Median_Salary",
+    size="Job_Postings",
+    color="Median_Salary",
+    color_continuous_scale="armyrose",
+    labels={"ONET_NAME": "ONET Occupation", "Median_Salary": "Median Salary", "Job_Postings": "Number of Job Postings"},
+    hover_name="ONET_NAME",
+    size_max=60,
+    height=800
+)
+
+fig.write_html("figures/Q2.html")
+fig.write_image("figures/Q2.svg")
+```
+## Analysis
+There is much higher demand for Data and Data Mining Analysts, but their median salary is over 60K lower than Compyter Systems Engineers and Architects. Meanwhile, Clinical Analysts and Market Research Analysts are both low in demand and do not make more than other analysts on this list.
+![](./figures/Q2.svg)
+
+# Salary by Education Level
+```{python}
+pdf_edu = df_selected.toPandas()
+
+conditions = [
+    pdf_edu["EDUCATION_LEVELS_NAME"].str.contains("GED|Associate|No Education", case=False, na=True),
+    pdf_edu["EDUCATION_LEVELS_NAME"].str.contains("Bachelor", case=False, na=True),
+    pdf_edu["EDUCATION_LEVELS_NAME"].str.contains("Master", case=False, na=True),
+    pdf_edu["EDUCATION_LEVELS_NAME"].str.contains("PhD|Doctorate|Professional", case=False, na=True)
+]
+
+choices = [
+    "Associate or Lower",
+    "Bachelor's",
+    "Master's",
+    "PhD"
+]
+
+pdf_edu["Education_Group"] = np.select(conditions, choices, default="Other")
+
+pdf_edu = pdf_edu[pdf_edu["Education_Group"].isin(["Associate or Lower", "Bachelor's", "Master's", "PhD"])]
+
+edu_groups = ["Associate or Lower", "Bachelor's", "Master's", "PhD"]
+
+pdf_edu["Experience_Jitter"] = pdf_edu["MAX_YEARS_EXPERIENCE"] + np.random.uniform(-0.1, 0.1, size=len(pdf_edu))
+
+fig = px.scatter(
+    pdf_edu,
+    x="Experience_Jitter",
+    y="Average_Salary",
+    color="Education_Group",
+    color_continuous_scale="delta",
+    title="Salary vs Experience by Education Level",
+    labels={
+        "Experience_Jitter": "Max Years of Experience",
+        "Average_Salary": "Average Salary",
+        "Education_Group": "Education Level"
+    },
+    height=600,
+    width=1200
+)
+
+fig.write_html("figures/Q3.html")
+fig.write_image("figures/Q3.svg")
+```
+## Analysis
+This plot shows that average salary is slightly more correlated to years of experience compared to education level. There is a clear uptrend along the x-axis for years of experience, but the various degrees are comingled with just a few outliers, which suggests that, rather than the overarching degree, analyzing salary by education level requires additional nuance such as the specific degree studied. For example, a PhD in food science may earn less than a bachelor's in computer science, but this graph does not make that key distinction.
+![](./figures/Q3.svg)
+
+# Salary by Remote Work Type
+```{python}
+pdf_remote = df_selected.select(
+    "REMOTE_TYPE_NAME", "MAX_YEARS_EXPERIENCE", "SALARY", "LOT_V6_SPECIALIZED_OCCUPATION_NAME"
+).toPandas()
+
+pdf_remote["Remote_Group"] = pdf_remote["REMOTE_TYPE_NAME"].str.lower()
+pdf_remote["Remote_Group"] = pdf_remote["Remote_Group"].fillna("onsite")
+pdf_remote["Remote_Group"] = pdf_remote["Remote_Group"].replace({
+    "": "onsite",
+    "not remote": "onsite",
+    "hybrid": "hybrid remote"
+})
+
+pdf_remote = pdf_remote.rename(columns={"SALARY": "Average_Salary"})
+
+pdf_remote["Experience_Jitter"] = pdf_remote["MAX_YEARS_EXPERIENCE"] + np.random.uniform(-0.2, 0.2, size=len(pdf_remote))
+
+fig = px.scatter(
+    pdf_remote,
+    x="Experience_Jitter",
+    y="Average_Salary",
+    color="Remote_Group",
+    hover_data=["LOT_V6_SPECIALIZED_OCCUPATION_NAME"],
+    title="Salary vs Experience by Remote Work Type (Scatter with Jitter)",
+    labels={
+        "Experience_Jitter": "Max Years of Experience",
+        "Average_Salary": "Average Salary",
+        "Remote_Group": "Remote Type"
+    },
+    height=600
+)
+
+fig.write_html("figures/Q4.html")
+fig.write_image("figures/Q4.svg")
+
+fig.show()
 
 ```
+## Analysis
+
