@@ -247,11 +247,11 @@ pdf_remote = df_selected.select(
 ).toPandas()
 
 pdf_remote["Remote_Group"] = pdf_remote["REMOTE_TYPE_NAME"].str.lower()
-pdf_remote["Remote_Group"] = pdf_remote["Remote_Group"].fillna("onsite")
+pdf_remote["Remote_Group"] = pdf_remote["Remote_Group"].fillna("Onsite")
 pdf_remote["Remote_Group"] = pdf_remote["Remote_Group"].replace({
-    "": "onsite",
-    "not remote": "onsite",
-    "hybrid": "hybrid remote"
+    "": "Onsite",
+    "Not Remote": "Onsite",
+    "Hybrid Remote": "Hybrid"
 })
 
 pdf_remote = pdf_remote.rename(columns={"SALARY": "Average_Salary"})
@@ -276,8 +276,7 @@ fig = px.scatter(
 fig.write_html("figures/Q4.html")
 fig.write_image("figures/Q4.svg")
 
-fig.show()
-
 ```
 ## Analysis
+There doesn't seem to be a strong correlation between salary and remote work type; the variance for onsite 
 
