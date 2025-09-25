@@ -1,0 +1,158 @@
+---
+title: Assignment 03
+author:
+  - name: Kelly Sheng
+    affiliations:
+      - id: bu
+        name: Boston University
+        city: Boston
+        state: MA
+number-sections: true
+date: '2025-09-24'
+format:
+  html:
+    theme: cerulean
+    toc: true
+    toc-depth: 2
+date-modified: today
+date-format: long
+execute:
+  echo: true
+  eval: true
+  freeze: auto
+---
+
+# Setup
+```{python}
+import pandas as pd
+import plotly.express as px
+import plotly.io as pio
+from pyspark.sql import SparkSession
+import re
+import numpy as np
+import plotly.graph_objects as go
+from pyspark.sql.functions import col, split, explode, regexp_replace, transform, when
+from pyspark.sql import functions as F
+from pyspark.sql.functions import col, monotonically_increasing_id
+```
+
+```{python}
+# | eval: true
+np.random.seed(42)
+
+pio.renderers.default = "notebook"
+
+# Initialize Spark Session
+spark = SparkSession.builder.appName("LightcastData").getOrCreate()
+
+# Load Data
+df = spark.read.option("header", "true").option("inferSchema", "true").option("multiLine","true").option("escape", "\"").csv("data/lightcast_job_postings.csv")
+df.createOrReplaceTempView("job_postings")
+```
+
+## Casting Salary and Experience Columns
+```{python}
+# | eval: true
+df = df.withColumn("SALARY", col("SALARY").cast("float")) \
+    .withColumn("SALARY_FROM", col("SALARY_FROM").cast("float")) \
+    .withColumn("SALARY_TO", col("SALARY_TO").cast("float")) \
+    .withColumn("MIN_YEARS_EXPERIENCE", col("MIN_YEARS_EXPERIENCE").cast("float")) \
+    .withColumn("MAX_YEARS_EXPERIENCE", col("MAX_YEARS_EXPERIENCE").cast("float"))
+```
+
+## Computing Medians
+```{python}
+# | eval: true
+median_from = df.approxQuantile("SALARY_FROM", [0.5], 0.01)[0]
+median_to = df.approxQuantile("SALARY_TO", [0.5], 0.01)[0]
+median_salary = df.approxQuantile("SALARY", [0.5], 0.01)[0]
+print("median_from: ", f"${median_from:,.2f}")
+print("median_to: ", f"${median_to:,.2f}")
+print("median_salary: ", f"${median_salary:,.2f}")
+```
+
+## Imputing Missing Salaries
+``` {python}
+# | eval: true
+df = df.fillna({
+    "SALARY_FROM": median_from,
+    "SALARY_TO": median_to,
+    "SALARY": median_salary
+})
+
+df = df.withColumn("Average_Salary", (col("SALARY_FROM") + col("SALARY_TO")) / 2)
+```
+
+## Cleaning Education and Employment Type Columns
+``` {python}
+# | eval: true
+df = df.withColumn(
+    "EDUCATION_LEVELS_NAME",
+    regexp_replace(col("EDUCATION_LEVELS_NAME"), r"[\n\r]", "")
+)
+
+
+df["EMPLOYMENT_TYPE_NAME"] = df["EMPLOYMENT_TYPE_NAME"].apply(
+    lambda x: re.sub(r"[^\x00-\x7F]", "", x)
+)
+```
+
+## Exporting Cleaned Data
+``` {python}
+# | eval: true
+export_cols = [
+  "EDUCATION_LEVELS_NAME",
+  "REMOTE_TYPE_NAME",
+  "MAX_YEARS_EXPERIENCE",
+  "Average_Salary",
+  "SALARY",
+  "LOT_V6_SPECIALIZED_OCCUPATION_NAME",
+  "EMPLOYMENT_TYPE_NAME",
+  "NAICS2_NAME"
+]
+df_selected = df.select(*export_cols)
+pdf = df_selected.toPandas()
+pdf.to_csv("data/lightcast_cleaned.csv", index=False)
+
+print("Data cleaning complete. Rows retained: ", len(pdf))
+```
+
+# Salary Distribution by Industry and Employment Type
+```{python}
+pdf_industry = (
+    df_selected
+    .filter((df_selected["SALARY"] > 0) & (df_selected["EMPLOYMENT_TYPE_NAME"].isNotNull()))
+    .select("EMPLOYMENT_TYPE_NAME", "SALARY", "NAICS2_NAME")
+    .toPandas()
+)
+
+median_salaries = pdf.groupby("EMPLOYMENT_TYPE_NAME")["SALARY"].median()
+
+sorted_employment_types = median_salaries.sort_values(ascending=False).index
+
+pdf["EMPLOYMENT_TYPE_NAME"] = pd.Categorical(
+    pdf["EMPLOYMENT_TYPE_NAME"],
+    categories=sorted_employment_types,
+    ordered=True
+)
+
+fig = px.box(
+    pdf,
+    x="NAICS2_NAME",
+    y="SALARY",
+    title="Salary Distribution by Industry",
+    color="EMPLOYMENT_TYPE_NAME",
+    boxmode="group",
+    points="all",
+    height=800
+)
+
+fig.show()
+```
+## Analysis
+The box plot shows that most industries have high variance in their job listings, with outliers making up the majority of industries like Retail Trade, Finance and Insurance, and Construction. However, industries like Public Administration and Educational Services are more naturally distributed, which makes sense given they are often government roles with fixed salaries. This plot shows that full-time salaries tend to be higher by median, but more volatile as well.
+
+# Salary Analysis by ONET Occupation Type (Bubble Chart)
+```{python}
+
+```
