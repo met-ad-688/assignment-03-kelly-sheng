@@ -45,7 +45,6 @@ pio.templates["nike"] = go.layout.Template(
        'font': {'family': 'Helvetica Neue, Helvetica, Sans-serif',
                      'size':16,
                      'color': '#333'},
-       'colorway': ['#e622a9', '#49bcca'],
        'hovermode': 'x unified'
    },
    data = {
