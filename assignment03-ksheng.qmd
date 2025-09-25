@@ -34,6 +34,31 @@ import plotly.graph_objects as go
 from pyspark.sql.functions import col, split, explode, regexp_replace, transform, when
 from pyspark.sql import functions as F
 from pyspark.sql.functions import col, monotonically_increasing_id
+
+pio.templates["nike"] = go.layout.Template(
+   layout = {
+       'title':
+           {'font': {'family': 'HelveticaNeue-CondensedBold, Helvetica, Sans-serif',
+                     'size':30,
+                     'color': '#333'}
+           },
+       'font': {'family': 'Helvetica Neue, Helvetica, Sans-serif',
+                     'size':16,
+                     'color': '#333'},
+       'colorway': ['#e622a9', '#49bcca'],
+       'hovermode': 'x unified'
+   },
+   data = {
+       'bar': [go.Bar(texttemplate = '%{value:$.2s}',
+                      textposition='outside',
+                      textfont={'family': 'Helvetica Neue, Helvetica, Sans-serif',
+                                'size': 20,
+                                'color': '#FFFFFF'
+                                })]
+   }
+)
+px.defaults.template = "nike"
+pio.templates.default = "nike"
 ```
 
 ```{python}
@@ -273,10 +298,25 @@ fig = px.scatter(
     height=600
 )
 
-fig.write_html("figures/Q4.html")
-fig.write_image("figures/Q4.svg")
+fig.write_html("figures/Q4a.html")
+fig.write_image("figures/Q4a.svg")
+```
 
+```{python}
+fig = px.histogram(
+    pdf_remote,
+    x="Average_Salary",
+    color="Remote_Group",
+    barmode="overlay",
+    nbins=50,
+    title="Salary Distribution by Remote Work Type",
+    labels={"Average_Salary": "Average Salary", "Remote_Group": "Remote Type"},
+    height=500,
+    opacity=0.7
+)
+fig.write_html("figures/Q4b.html")
+fig.write_image("figures/Q4b.svg")
 ```
 ## Analysis
-There doesn't seem to be a strong correlation between salary and remote work type; the variance for onsite 
+There doesn't seem to be a strong correlation between salary and remote work type; the variance for onsite is generally higher, whereas hybrid is lower. The difference in data between remote work types is not drastic enough to indicate a real trend.
 
